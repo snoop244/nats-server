@@ -3756,6 +3756,31 @@ func (js *jetStream) createGroupForStream(ci *ClientInfo, cfg *StreamConfig) *ra
 	return nil
 }
 
+func (js *jetStream) haExceeded(acc string, limit int) bool {
+	if limit <= 0 {
+		return false
+	}
+	js.mu.RLock()
+	defer js.mu.RUnlock()
+	if assignment, ok := js.cluster.streams[acc]; ok {
+		cnt := 0
+		for _, v := range assignment {
+			if v.Group != nil && len(v.Group.Peers) > 1 {
+				cnt++
+			}
+			for _, v := range v.consumers {
+				if v.Group != nil && len(v.Group.Peers) > 1 {
+					cnt++
+				}
+			}
+			if cnt >= limit {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Server) jsClusteredStreamRequest(ci *ClientInfo, acc *Account, subject, reply string, rmsg []byte, config *StreamConfig) {
 	js, cc := s.getJetStreamCluster()
 	if js == nil || cc == nil {
@@ -3767,6 +3792,11 @@ func (s *Server) jsClusteredStreamRequest(ci *ClientInfo, acc *Account, subject,
 	// Grab our jetstream account info.
 	acc.mu.RLock()
 	jsa := acc.js
+	accName := acc.Name
+	accHaLim := 0
+	if jsa != nil {
+		accHaLim = jsa.limits.MaxHaResources
+	}
 	acc.mu.RUnlock()
 
 	if jsa == nil {
@@ -3782,6 +3812,12 @@ func (s *Server) jsClusteredStreamRequest(ci *ClientInfo, acc *Account, subject,
 		return
 	}
 	cfg := &ccfg
+
+	if config.Replicas > 1 && js.haExceeded(accName, accHaLim) {
+		resp.Error = NewJSNotEnabledForAccountError()
+		s.sendAPIErrResponse(ci, acc, subject, reply, string(rmsg), s.jsonResponse(&resp))
+		return
+	}
 
 	// Check for stream limits here before proposing. These need to be tracked from meta layer, not jsa.
 	js.mu.RLock()
@@ -4496,10 +4532,23 @@ func (s *Server) jsClusteredConsumerRequest(ci *ClientInfo, acc *Account, subjec
 		return
 	}
 
-	js.mu.Lock()
-	defer js.mu.Unlock()
+	// Grab our jetstream account info.
+	acc.mu.RLock()
+	jsa := acc.js
+	accName := acc.Name
+	accHaLim := jsa.limits.MaxHaResources
+	acc.mu.RUnlock()
 
 	var resp = JSApiConsumerCreateResponse{ApiResponse: ApiResponse{Type: JSApiConsumerCreateResponseType}}
+
+	if cfg.Durable != _EMPTY_ && js.haExceeded(accName, accHaLim) {
+		resp.Error = NewJSNotEnabledForAccountError()
+		s.sendAPIErrResponse(ci, acc, subject, reply, string(rmsg), s.jsonResponse(&resp))
+		return
+	}
+
+	js.mu.Lock()
+	defer js.mu.Unlock()
 
 	// Lookup the stream assignment.
 	sa := js.streamAssignment(acc.Name, stream)
