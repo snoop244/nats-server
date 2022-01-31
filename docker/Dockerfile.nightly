@@ -11,7 +11,7 @@ RUN mkdir -p src/github.com/snoop244 && \
 
 RUN go get github.com/nats-io/nsc
 
-FROM alpine:latest
+FROM ubuntu:latest
 
 RUN apk add --update ca-certificates && mkdir -p /nats/bin && mkdir /nats/conf
 
