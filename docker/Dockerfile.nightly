@@ -3,8 +3,8 @@ FROM golang:1.17-alpine AS builder
 ARG VERSION="v2.1.7"
 
 RUN apk add --update git
-RUN mkdir -p src/github.com/nats-io && \
-    cd src/github.com/nats-io/ && \
+RUN mkdir -p src/github.com/snoop244 && \
+    cd src/github.com/snoop244/ && \
     git clone https://github.com/nats-io/natscli.git && \
     cd natscli/nats && \
     go build -ldflags "-w -X main.version=${VERSION}" -o /nats
